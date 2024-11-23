@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>World Simulator</title>
+    <style>
+        /* Reset default styles */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center; /* Center align all elements */
+        }
+
+        #wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center; /* Center align all elements */
+            height: 100vh;
+        }
+
+        #main-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex-grow: 1;
+            justify-content: center;
+            background-color: #e0e0e0;
+            width: 100%;
+        }
+
+        h2 {
+            color: forestgreen;
+            margin-top: 20px;
+        }
+
+        #info {
+            background-color: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 15px;
+            display: inline-block;
+        }
+
+        #controls {
+            margin-bottom: 15px;
+        }
+
+        #controls button {
+            margin: 0 5px;
+            padding: 10px 20px;
+            font-size: 12px;
+        }
+
+        .slider-container {
+            margin-top: 10px;
+            margin-bottom: 20px;
+        }
+
+        .slider-container label {
+            font-weight: bold;
+        }
+
+        #canvas-container {
+            margin-bottom: 20px;
+        }
+
+        #simulation-canvas {
+            border: 1px solid #000;
+            image-rendering: pixelated;
+        }
+
+        #element-selection {
+            margin-bottom: 20px;
+        }
+
+        #element-selection h3 {
+            margin-bottom: 10px;
+        }
+
+        .button-row {
+            display: flex;
+            justify-content: center;
+            margin-bottom: 10px;
+        }
+
+        .element-button {
+            margin: 5px;
+            padding: 10px 20px;
+            font-size: 12px;
+            flex: 1;
+            max-width: 150px;
+        }
+
+        .element-button.selected {
+            background-color: #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div id="wrapper">
+        <div id="main-content">
+            <h2>World Simulator</h2>
+            <!-- Info -->
+            <div id="info">
+                <b>Date:</b> <span id="date-value"></span><br>
+                <b>Wind:</b> <span id="wind-value"></span><br>
+                <b>Temperature:</b> <span id="temperature-value"></span>°C
+            </div>
+            <!-- Controls -->
+            <div id="controls">
+                <button id="play-button">Play</button>
+                <button id="pause-button">Pause</button>
+                <button id="reset-button">Reset Simulation</button>
+                <div class="slider-container">
+                    <label>Speed (steps/sec): <span id="speed-display">10</span></label>
+                    <input type="range" id="speed-slider" min="1" max="100" step="1" value="10">
+                </div>
+            </div>
+            <!-- Canvas -->
+            <div id="canvas-container">
+                <canvas id="simulation-canvas"></canvas>
+            </div>
+            <!-- Element Selection -->
+            <div id="element-selection">
+                <h3>Select Element to Place:</h3>
+                <div class="button-row">
+                    <button class="element-button" data-element="1"><span style='color: forestgreen;'>■</span> Tree</button>
+                    <button class="element-button" data-element="0"><span style='color: olivedrab;'>■</span> Grass</button>
+                    <button class="element-button" data-element="-2"><span style='color: grey;'>■</span> Bedrock</button>
+                    <button class="element-button" data-element="-3"><span style='color: steelblue;'>■</span> Water</button>
+                </div>
+                <div class="button-row">
+                    <button class="element-button" data-element="4"><span style='color: brown;'>●</span> Animal</button>
+                    <button class="element-button" data-element="5"><span style='color: red;'>●</span> Human</button>
+                    <button class="element-button" data-element="2"><span style='color: orange;'>■</span> Fire</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Add JavaScript code here -->
+    <script>
+        // Simulation class (WFSim)
+        class WFSim {
+            constructor(h = 60, w = 60) {
+                this.f = 0.00;  // fire probability
+                this.p = 0.005;  // tree growing probability
+                this.h = h;  // grid height
+                this.w = w;  // grid width
+                this.date = new Date();
+                this.windDirections = ["calm", "S", "N", "W", "E", "SW", "SE", "NW", "NE"];
+                this.wind = this.windDirections[Math.floor(Math.random() * this.windDirections.length)];  // initial wind
+                this.cloud = 0.5;  // cloud generation probability
+                this.temp = this.temperature();  // initialize temperature
+                this.old_landscape = null;
+
+                // Cloud movement offsets
+                this.cloud_offsets = {
+                    "calm": [],
+                    "N": [[1, 0]],
+                    "S": [[-1, 0]],
+                    "E": [[0, -1]],
+                    "W": [[0, 1]],
+                    "NE": [[1, -1]],
+                    "NW": [[1, 1]],
+                    "SE": [[-1, -1]],
+                    "SW": [[-1, 1]],
+                };
+
+                this.initialize_landscape();
+            }
+
+            initialize_landscape() {
+                // Initialize landscape with terrain and entities
+                // terrain: -3 to 3
+                // entity: null, 4 (animal), 5 (human)
+                this.landscape = [];
+                for (let i = 0; i < this.h; i++) {
+                    this.landscape[i] = [];
+                    for (let j = 0; j < this.w; j++) {
+                        let terrainValue = Math.random() < 0.5 ? 0 : 1;  // grass or tree
+                        this.landscape[i][j] = {
+                            terrain: terrainValue,
+                            entity: null
+                        };
+                    }
+                }
+
+                // Assign bedrock and water with clustering
+                for (let i = 0; i < this.h; i++) {
+                    for (let j = 0; j < this.w; j++) {
+                        let coefB = this.surf_neighbors_check(i, j, "B") ? 5 : 1;
+                        if (0.005 * coefB > Math.random()) {
+                            this.landscape[i][j].terrain = -2;  // bedrock
+                        }
+
+                        let coefW = this.surf_neighbors_check(i, j, "W") ? 10 : 0.1;
+                        if (0.05 * coefW > Math.random()) {
+                            this.landscape[i][j].terrain = -3;  // water
+                        }
+                    }
+                }
+            }
+
+            surf_neighbors_check(idx, jdx, surf_type) {
+                const offsets = [[-1, -1], [-1, 0], [-1, 1],
+                                [0, -1],         [0, 1],
+                                [1, -1],  [1, 0], [1, 1]];
+                let surf_value = surf_type === "B" ? -2 : -3;
+                for (let [di, dj] of offsets) {
+                    let ni = idx + di, nj = jdx + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        if (this.landscape[ni][nj].terrain === surf_value) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            fire_neighbors_check(idx, jdx) {
+                const offsets = [[-1, -1], [-1, 0], [-1, 1],
+                                [0, -1],         [0, 1],
+                                [1, -1],  [1, 0], [1, 1]];
+                for (let [di, dj] of offsets) {
+                    let ni = idx + di, nj = jdx + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        if (this.landscape[ni][nj].terrain === 2) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            temperature() {
+                let average_temp = 20;
+                let amplitude = 5;
+                let noise_level = 2;
+                let temp_series = [];
+                for (let hour = 0; hour < 24; hour++) {
+                    let temp = average_temp + amplitude * Math.sin(2 * Math.PI * hour / 24 - Math.PI / 2);
+                    temp += noise_level * (Math.random() * 2 - 1);
+                    temp_series.push(temp);
+                }
+                return temp_series;
+            }
+
+            cloud_move() {
+                let offsets = this.cloud_offsets[this.wind];
+                let mask = [];
+                for (let i = 0; i < this.h; i++) {
+                    mask[i] = [];
+                    for (let j = 0; j < this.w; j++) {
+                        mask[i][j] = false;
+                    }
+                }
+                for (let i = 0; i < this.h; i++) {
+                    for (let j = 0; j < this.w; j++) {
+                        for (let [di, dj] of offsets) {
+                            let ni = i + di, nj = j + dj;
+                            if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w && this.landscape[i][j].terrain === 3) {
+                                mask[ni][nj] = true;
+                            }
+                        }
+                    }
+                }
+                return mask;
+            }
+
+            generate_cloud() {
+                let size = 16;
+                let mask = [];
+                for (let i = 0; i < this.h; i++) {
+                    mask[i] = [];
+                    for (let j = 0; j < this.w; j++) {
+                        mask[i][j] = false;
+                    }
+                }
+                const offsets = [[-1, -1], [-1, 0], [-1, 1],
+                                [0, -1],         [0, 1],
+                                [1, -1],  [1, 0], [1, 1]];
+                let idx_prev = Math.floor(Math.random() * this.h);
+                let jdx_prev = Math.floor(Math.random() * this.w);
+                for (let k = 0; k < size; k++) {
+                    let direction = offsets[Math.floor(Math.random() * offsets.length)];
+                    let [di, dj] = direction;
+                    let ni = idx_prev + di, nj = jdx_prev + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        mask[ni][nj] = true;
+                        idx_prev = ni;
+                        jdx_prev = nj;
+                    }
+                }
+                return mask;
+            }
+
+            step(step_num) {
+                // Update wind more randomly
+                if (step_num % 10 === 0) {
+                    this.wind = this.windDirections[Math.floor(Math.random() * this.windDirections.length)];
+                }
+
+                if (step_num % 24 === 0 && step_num > 0) {
+                    this.temp = this.temperature();
+                }
+
+                let new_landscape = JSON.parse(JSON.stringify(this.landscape));
+
+                // Process terrain changes
+                for (let i = 0; i < this.h; i++) {
+                    for (let j = 0; j < this.w; j++) {
+                        let cell = this.landscape[i][j];
+                        let new_cell = new_landscape[i][j];
+
+                        if (new_cell.terrain === 3) {
+                            if (this.old_landscape && (this.old_landscape[i][j].terrain === -1 || this.old_landscape[i][j].terrain === 2)) {
+                                new_cell.terrain = 0;  // grow grass if burned or burning
+                            } else if (this.old_landscape) {
+                                new_cell.terrain = this.old_landscape[i][j].terrain;  // else keep state
+                            }
+                        }
+
+                        if (new_cell.terrain === 2) {  // Ash after fire
+                            new_cell.terrain = -1;
+                        }
+
+                        if (this.p > Math.random() && cell.terrain === 0) {
+                            new_cell.terrain = 1;  // Grow tree on grass
+                        }
+
+                        let coef = this.temp[step_num % 24] > 25 ? 2 : 1;
+                        if ((this.f * coef > Math.random() || this.fire_neighbors_check(i, j)) && cell.terrain === 1) {
+                            new_cell.terrain = 2;  // Burn tree
+                        }
+                    }
+                }
+
+                this.old_landscape = JSON.parse(JSON.stringify(new_landscape));  // Store updated landscape
+
+                if (this.containsValue(this.landscape, 3) && this.wind !== "calm") {
+                    let cloud_mask = this.cloud_move();
+                    for (let i = 0; i < this.h; i++) {
+                        for (let j = 0; j < this.w; j++) {
+                            if (cloud_mask[i][j]) {
+                                new_landscape[i][j].terrain = 3;
+                            }
+                        }
+                    }
+                }
+
+                if (this.cloud > Math.random()) {
+                    let cloud_mask = this.generate_cloud();
+                    for (let i = 0; i < this.h; i++) {
+                        for (let j = 0; j < this.w; j++) {
+                            if (cloud_mask[i][j]) {
+                                new_landscape[i][j].terrain = 3;
+                            }
+                        }
+                    }
+                }
+
+                // Collect all entities
+                let entities = [];
+                for (let i = 0; i < this.h; i++) {
+                    for (let j = 0; j < this.w; j++) {
+                        if (this.landscape[i][j].entity !== null) {
+                            entities.push({i: i, j: j, entity: this.landscape[i][j].entity});
+                        }
+                    }
+                }
+
+                // Shuffle entities
+                entities = shuffleArray(entities);
+
+                // Process entities
+                for (let e of entities) {
+                    let i = e.i;
+                    let j = e.j;
+                    if (this.landscape[i][j].entity === e.entity) {  // Entity has not moved yet
+                        if (e.entity === 4) {  // Animal
+                            this.processAnimal(i, j, new_landscape);
+                        } else if (e.entity === 5) {  // Human
+                            this.processHuman(i, j, new_landscape);
+                        }
+                    }
+                }
+
+                this.landscape = new_landscape;  // Update main landscape
+            }
+
+            processAnimal(i, j, new_landscape) {
+                let possibleMoves = [[-1, 0], [1, 0], [0, -1], [0, 1]];  // N, S, W, E
+                let moves = shuffleArray(possibleMoves);  // Randomize movement order
+
+                for (let [di, dj] of moves) {
+                    let ni = i + di, nj = j + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        let targetCell = this.landscape[ni][nj];
+
+                        // Check for human interaction
+                        if (targetCell.entity === 5) {
+                            // Interaction occurs, handled in processHuman
+                            continue;
+                        }
+
+                        if (targetCell.terrain >= -1 && targetCell.entity == null) {
+                            // Move animal
+                            new_landscape[ni][nj].entity = 4;
+                            new_landscape[i][j].entity = null;
+                            // If target cell is grass, eat it
+                            if (new_landscape[ni][nj].terrain === 0) {
+                                new_landscape[ni][nj].terrain = -1;  // Turn to ash or empty
+                            }
+                            // If target cell is burning, animal dies
+                            if (new_landscape[ni][nj].terrain === 2) {
+                                new_landscape[ni][nj].entity = null;
+                            }
+                            break;  // Animal moved, break loop
+                        }
+                    }
+                }
+            }
+
+            processHuman(i, j, new_landscape) {
+                let possibleMoves = [[-1, 0], [1, 0], [0, -1], [0, 1]];  // N, S, W, E
+                let moves = shuffleArray(possibleMoves);  // Randomize movement order
+
+                // Check adjacent cells for fire and extinguish
+                for (let [di, dj] of moves) {
+                    let ni = i + di, nj = j + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        let targetCell = this.landscape[ni][nj];
+                        if (targetCell.terrain === 2) {
+                            // Extinguish fire
+                            new_landscape[ni][nj].terrain = -1;  // Turn burning tree to ash
+                        }
+                    }
+                }
+
+                // Check adjacent cells for animals and interact
+                let isHumanAlive = true;
+                for (let [di, dj] of moves) {
+                    let ni = i + di, nj = j + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        let targetCell = this.landscape[ni][nj];
+                        if (targetCell.entity === 4) {  // Animal
+                            // Interaction occurs
+                            if (Math.random() < 0.7) {
+                                // Human kills animal
+                                new_landscape[ni][nj].entity = null;
+                            } else {
+                                // Human is killed
+                                new_landscape[i][j].entity = null;
+                                isHumanAlive = false;
+                                break;  // Human is dead, stop processing
+                            }
+                        }
+                    }
+                }
+
+                if (!isHumanAlive) {
+                    return;  // Human is dead, do not proceed
+                }
+
+                // Move human
+                let hasMoved = false;
+                for (let [di, dj] of moves) {
+                    let ni = i + di, nj = j + dj;
+                    if (ni >= 0 && nj >= 0 && ni < this.h && nj < this.w) {
+                        let targetCell = this.landscape[ni][nj];
+                        if (targetCell.terrain >= -1 && targetCell.entity == null) {
+                            // Move human
+                            new_landscape[ni][nj].entity = 5;
+                            new_landscape[i][j].entity = null;
+
+                            // Possibly plant tree in previous location
+                            if (new_landscape[i][j].terrain === -1 && Math.random() < 0.1) {
+                                new_landscape[i][j].terrain = 1;  // Plant tree
+                            }
+
+                            // If target cell is burning, human dies
+                            if (new_landscape[ni][nj].terrain === 2) {
+                                new_landscape[ni][nj].entity = null;
+                            }
+                            hasMoved = true;
+                            break;  // Human moved, break loop
+                        }
+                    }
+                }
+
+                // If human did not move, possibly plant tree in current location
+                if (!hasMoved && new_landscape[i][j].terrain === -1 && Math.random() < 0.1) {
+                    new_landscape[i][j].terrain = 1;  // Plant tree
+                }
+            }
+
+            containsValue(landscape, value) {
+                for (let i = 0; i < landscape.length; i++) {
+                    for (let j = 0; j < landscape[i].length; j++) {
+                        if (landscape[i][j].terrain === value) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+
+            reset() {
+                this.f = 0.01;
+                this.p = 0.0001;
+                this.h = 80;
+                this.w = 80;
+                this.wind = this.windDirections[Math.floor(Math.random() * this.windDirections.length)];
+                this.cloud = 0.02;
+                this.temp = this.temperature();
+                this.old_landscape = null;
+                this.initialize_landscape();
+            }
+        }
+
+        // Now, set up the canvas and simulation
+        let simCanvas, simContext;
+        let Sim;
+        let current_step = 0;
+        let isRunning = false;
+        let max_steps = 1000;
+        let speed = 10;
+        let initial_date = new Date('2024-11-23T02:30:00'); // Set initial date
+        let selectedElement = null;
+
+        function init() {
+            // Get the canvas and context
+            simCanvas = document.getElementById('simulation-canvas');
+            simContext = simCanvas.getContext('2d');
+
+            // Initialize the simulation
+            resetSimulation();
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize, false);
+            onWindowResize();
+
+            // Handle canvas click for placing elements
+            simCanvas.addEventListener('click', onCanvasClick);
+
+            // Handle element selection
+            let elementButtons = document.querySelectorAll('.element-button');
+            elementButtons.forEach(button => {
+                button.addEventListener('click', () => {
+                    elementButtons.forEach(btn => btn.classList.remove('selected'));
+                    button.classList.add('selected');
+                    selectedElement = parseInt(button.getAttribute('data-element'));
+                });
+            });
+        }
+
+        function onWindowResize() {
+            // Adjust canvas size based on container
+            let container = document.getElementById('canvas-container');
+            simCanvas.width = Sim.w * 5; // Adjust cell size as needed
+            simCanvas.height = Sim.h * 5; // Adjust cell size as needed
+            updateCanvas();
+        }
+
+        function onCanvasClick(event) {
+            if (selectedElement !== null) {
+                let rect = simCanvas.getBoundingClientRect();
+                let x = event.clientX - rect.left;
+                let y = event.clientY - rect.top;
+                let cellWidth = simCanvas.width / Sim.w;
+                let cellHeight = simCanvas.height / Sim.h;
+                let j = Math.floor(x / cellWidth);
+                let i = Math.floor(y / cellHeight);
+
+                if (i >= 0 && j >= 0 && i < Sim.h && j < Sim.w) {
+                    if (selectedElement === 4 || selectedElement === 5) {
+                        // Place entity
+                        Sim.landscape[i][j].entity = selectedElement;
+                    } else if (selectedElement === 2) {
+                        // Set terrain to burning
+                        Sim.landscape[i][j].terrain = 2;
+                    } else {
+                        // Set terrain
+                        Sim.landscape[i][j].terrain = selectedElement;
+                        Sim.landscape[i][j].entity = null; // Remove entity if terrain changes
+                    }
+                    updateCanvas();
+                }
+            }
+        }
+
+        // Function to update the canvas based on the simulation data
+        function updateCanvas() {
+            let cellWidth = simCanvas.width / Sim.w;
+            let cellHeight = simCanvas.height / Sim.h;
+
+            for (let i = 0; i < Sim.h; i++) {
+                for (let j = 0; j < Sim.w; j++) {
+                    let cell = Sim.landscape[i][j];
+                    let terrainValue = cell.terrain;
+                    let entityValue = cell.entity;
+                    simContext.fillStyle = getColor(terrainValue);
+                    simContext.fillRect(j * cellWidth, i * cellHeight, cellWidth, cellHeight);
+
+                    if (entityValue !== null) {
+                        // Draw entity
+                        simContext.fillStyle = getEntityColor(entityValue);
+                        // Draw a circle to represent the entity
+                        simContext.beginPath();
+                        simContext.arc((j + 0.5) * cellWidth, (i + 0.5) * cellHeight, cellWidth / 3, 0, 2 * Math.PI);
+                        simContext.fill();
+                    }
+                }
+            }
+        }
+
+        function getColor(value) {
+            // Match the colors
+            switch (value) {
+                case -3: // Water
+                    return 'steelblue';
+                case -2: // Bedrock
+                    return 'grey';
+                case -1: // Ash
+                    return 'black';
+                case 0: // Grass
+                    return 'olivedrab';
+                case 1: // Tree
+                    return 'forestgreen';
+                case 2: // Burning
+                    return 'orange';
+                case 3: // Cloud
+                    return '#C7C4BF';
+                default:
+                    return 'white';
+            }
+        }
+
+        function getEntityColor(value) {
+            switch (value) {
+                case 4:  // Animal
+                    return 'brown';
+                case 5:  // Human
+                    return 'red';
+                default:
+                    return 'black';
+            }
+        }
+
+        function animate() {
+            if (isRunning && current_step < max_steps) {
+                Sim.step(current_step);
+                updateCanvas();
+                updateInfo();
+                current_step++;
+                setTimeout(animate, 1000 / speed);
+            }
+        }
+
+        function updateInfo() {
+            let current_time = new Date(initial_date.getTime() + current_step * 3600000);
+            let dateValue = document.getElementById('date-value');
+            let windValue = document.getElementById('wind-value');
+            let temperatureValue = document.getElementById('temperature-value');
+
+            dateValue.innerText = current_time.toISOString().substring(0, 16).replace('T', ' ');
+            windValue.innerText = Sim.wind;
+            temperatureValue.innerText = Sim.temp[current_step % 24].toFixed(1);
+        }
+
+        // Event listeners for controls
+        document.getElementById('play-button').addEventListener('click', () => {
+            if (!isRunning) {
+                isRunning = true;
+                animate();
+            }
+        });
+
+        document.getElementById('pause-button').addEventListener('click', () => {
+            isRunning = false;
+        });
+
+        document.getElementById('reset-button').addEventListener('click', () => {
+            isRunning = false;
+            resetSimulation();
+        });
+
+        document.getElementById('speed-slider').addEventListener('input', (event) => {
+            speed = parseInt(event.target.value);
+            document.getElementById('speed-display').innerText = speed;
+        });
+
+        function resetSimulation() {
+            Sim = new WFSim();
+            current_step = 0;
+            initial_date = new Date('2024-11-23T02:30:00'); // Reset initial date
+            isRunning = false;
+
+            // Adjust canvas size
+            simCanvas.width = Sim.w * 5; // Adjust cell size as needed
+            simCanvas.height = Sim.h * 5; // Adjust cell size as needed
+
+            updateCanvas();
+            updateInfo();
+        }
+
+        // Utility function to shuffle array
+        function shuffleArray(array) {
+            for (let i = array.length -1; i > 0; i--) {
+                let j = Math.floor(Math.random() * (i +1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+            return array;
+        }
+
+        // Initialize the simulation
+        init();
+    </script>
+</body>
+</html>
